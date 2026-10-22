@@ -31,6 +31,17 @@ def linear_initial(samples):
     return np.r_[cv2.Rodrigues(R)[0].ravel(),x[6:]]
 
 
+def camera_pose(r, c):
+    """Rotation and t for rotation vector r and camera position c=(fwd,left,up) in the LiDAR frame.
+
+    A planar scan never uses R[:,2], so its sign is unobservable; 'up' is taken as the column pointing up in the
+    camera image (negative optical y), which also fixes the sign of the camera's height above the scan plane.
+    """
+    R = cv2.Rodrigues(np.asarray(r, float))[0]
+    up = R[:, 2] if R[1, 2] < 0 else -R[:, 2]
+    return R, -(R[:, 0]*c[0]+R[:, 1]*c[1]+up*c[2])
+
+
 def optimize(samples, initial):
     def balanced(x):
         raw=residual(x,samples); start=0; parts=[]
@@ -53,6 +64,9 @@ def main():
     parser.add_argument('--output',default='extrinsic.yaml')
     parser.add_argument('--init',nargs=6,type=float,metavar=('RX','RY','RZ','TX','TY','TZ'),help='Measured approximate Rodrigues radians + translation metres; default uses data-derived linear initialization')
     parser.add_argument('--max-rmse',type=float,default=.02)
+    parser.add_argument('--camera-pos',nargs=3,type=float,metavar=('FWD','LEFT','UP'),help='Measured camera position in the LiDAR frame (m, relative to scan plane centre); fixes translation and solves rotation only')
+    parser.add_argument('--no-reject',action='store_true',help='Keep every pose; default drops outlier poses (wrong ROI, motion) one at a time')
+    parser.add_argument('--min-poses',type=int,default=12,help='Stop rejecting outliers at this many poses')
     args=parser.parse_args()
     samples=[]; frames=None; camera=None
     for path in sorted(Path(args.data_dir).expanduser().glob('sample_*.npz')):
@@ -65,7 +79,7 @@ def main():
             raise SystemExit(f'Invalid sample: {path}')
         if frames is not None and (pair!=frames or signature.shape!=camera.shape or not np.allclose(signature,camera)):
             raise SystemExit('Mixed frame IDs, intrinsic or board settings in sample directory')
-        frames=pair; camera=signature; samples.append(s)
+        frames=pair; camera=signature; s['name']=path.name; samples.append(s)
     if len(samples)<8: raise SystemExit('Need >=8 poses; recommend 20-30 diverse poses')
     normals=np.stack([s['normal_c'] for s in samples])
     ns=np.linalg.svd(normals,compute_uv=False)
@@ -75,6 +89,26 @@ def main():
         result,singular,rank,condition=optimize(samples,initial)
     except ValueError as e:
         raise SystemExit(str(e))
+    dropped=[]
+    while not args.no_reject and len(samples)>args.min_poses:
+        errs=[float(np.sqrt(np.mean(residual(result.x,[s])**2))) for s in samples]
+        worst=int(np.argmax(errs))
+        if errs[worst]<=max(2.5*float(np.median(errs)),.015): break
+        dropped.append((samples[worst]['name'],errs[worst])); del samples[worst]
+        result,singular,rank,condition=optimize(samples,result.x)
+    if args.camera_pos:
+        c=np.asarray(args.camera_pos,float)
+        def balanced_c(r):
+            x=np.r_[r,camera_pose(r,c)[1]]
+            return np.concatenate([residual(x,[s])/np.sqrt(len(s['points_l'])) for s in samples])
+        fit=least_squares(balanced_c,result.x[:3],loss='soft_l1',f_scale=.003,x_scale='jac',max_nfev=5000)
+        eps=1e-6
+        J=np.column_stack([(balanced_c(fit.x+np.eye(3)[i]*eps)-balanced_c(fit.x-np.eye(3)[i]*eps))/(2*eps) for i in range(3)])
+        singular=np.linalg.svd(J,compute_uv=False); rank=int(np.sum(singular>singular[0]*1e-5)); condition=float(singular[0]/singular[-1])
+        result.x=np.r_[fit.x,camera_pose(fit.x,c)[1]]; result.success=fit.success
+        if rank<3: raise SystemExit('Rotation unobservable even with fixed camera position')
+        print('Camera position fixed at (fwd,left,up) m:',c.tolist(),'- rotation only')
+    for name,err in dropped: print(f'Rejected outlier pose {name}: RMSE {err*1000:.0f} mm')
     R=cv2.Rodrigues(result.x[:3])[0]; t=result.x[3:]
     per_pose=[float(np.sqrt(np.mean(residual(result.x,[s])**2))) for s in samples]
     rms=float(np.sqrt(np.mean(residual(result.x,samples)**2)))
@@ -82,7 +116,7 @@ def main():
     print('Initial [rvec,t]:',initial)
     print('success:',result.success,'rank:',rank,'condition:',condition,'RMSE [m]:',rms)
     print('Per-pose RMSE [m]:',per_pose)
-    if not result.success or rank<6 or condition>1e5 or rms>args.max_rmse or front<1:
+    if not result.success or rank<(3 if args.camera_pos else 6) or condition>1e5 or rms>args.max_rmse or front<1:
         raise SystemExit('Calibration rejected: convergence/observability/residual/cheirality failed. No output written.')
     T=np.eye(4); T[:3,:3]=R; T[:3,3]=t
     out=dict(source_frame=frames[0],target_frame=frames[1],convention='p_camera_optical = R @ p_lidar + t',

@@ -18,6 +18,7 @@ def load_camera(path):
 def scan_points(scan):
     r = np.asarray(scan.ranges, float)
     a = scan.angle_min + np.arange(len(r)) * scan.angle_increment
+    a = np.arctan2(np.sin(a), np.cos(a))  # drivers like ldlidar publish 0..2pi; ROI gates assume -pi..pi
     good = np.isfinite(r) & (r >= scan.range_min) & (r <= scan.range_max)
     ids = np.flatnonzero(good)
     return np.c_[r[good]*np.cos(a[good]), r[good]*np.sin(a[good]), np.zeros(len(ids))], ids, a[good], r[good]
@@ -45,6 +46,21 @@ def select_segment(points, ids, mask, min_points=6, gap=0.04, line_rmse=0.008):
     if error > line_rmse:
         raise ValueError(f'Segment not planar/straight: line RMSE {error:.4f} m')
     return p[chosen], ix[chosen], error
+
+
+def candidate_segments(points, ids, mask, min_points=6, gap=0.04, line_rmse=0.008):
+    """All contiguous clusters in the ROI that are long enough and straight (unlike select_segment, never raises)."""
+    p, ix = points[mask], ids[mask]
+    if len(p) < min_points:
+        return []
+    breaks = np.flatnonzero((np.diff(ix) != 1) | (np.linalg.norm(np.diff(p, axis=0), axis=1) > gap))+1
+    out = []
+    for c in np.split(np.arange(len(p)), breaks):
+        if len(c) < min_points:
+            continue
+        error, _ = fit_line(p[c])
+        out.append(dict(points=p[c], ids=ix[c], rmse=error, straight=error <= line_rmse))
+    return out
 
 
 def project(points, R, t, K, D, width, height):

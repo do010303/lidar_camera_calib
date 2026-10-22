@@ -15,4 +15,6 @@ setup(name=package_name, version='0.0.1', packages=[package_name],
           'validate = lidar_camera_calib.validate:main',
           'evaluate = lidar_camera_calib.evaluate:main',
           'check_range = lidar_camera_calib.check_range:main',
+          'capture_guide = lidar_camera_calib.capture_guide:main',
+          'overlay = lidar_camera_calib.overlay:main',
       ]})
