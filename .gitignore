@@ -1,0 +1,38 @@
+# ROS / Python generated files
+build/
+install/
+log/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Sensor recordings, calibration runs and local output
+samples*/
+sessions/
+current_*_session.txt
+evaluation*.csv
+evaluation*.yaml
+extrinsic*.yaml
+*.bag
+*.db3
+*.mcap
+*.npz
+*.tar.gz
+
+# Local application / credential directories
+.agents/
+.codex/
+.aws/
+.env
+.env.*
+*.pem
+*.key
+
+# Publication artifacts
+lidar_camera_calib_source.zip
+
+# Unpacked source distribution (duplicate of the package)
+/lidar_camera_calib_source/

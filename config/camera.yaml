@@ -1,0 +1,26 @@
+image_width: 1280
+image_height: 720
+K:
+- 736.48804
+- 0.0
+- 614.53626
+- 0.0
+- 736.06252
+- 359.81996
+- 0.0
+- 0.0
+- 1.0
+D:
+- -0.002772
+- -0.066994
+- -0.001457
+- 0.000663
+- 0.0
+board_cols: 9
+board_rows: 6
+square_size_m: 0.025
+intrinsic_source: C930e 1280x720 calibration; focus=0, zoom=100; device-specific reference
+distortion_model: plumb_bob
+focus_absolute: 0
+zoom_absolute: 100
+focus_automatic_continuous: false
